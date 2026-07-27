@@ -108,7 +108,7 @@ class MHCpeptideDataset(Dataset):
         self.label_col = label_col
 
         self.mhc_len = int(getattr(pair_cfg, "mhc_len", 34))
-        self.pep_len = int(getattr(pair_cfg, "pep_len", 11))
+        self.pep_len = int(getattr(pair_cfg, "pep_len", 15))
         self.fixed_len = int(getattr(pair_cfg, "fixed_len", self.mhc_len + self.pep_len))
 
         self.label_fn: LabelFn = label_fn if label_fn is not None else _default_label_fn

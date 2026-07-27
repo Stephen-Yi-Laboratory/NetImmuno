@@ -31,3 +31,13 @@ downsampling.py
 archive_name.tar.gz
 balanced_data.csv
 data/train_data.zip
+/Case_report/*
+/Cohort_data/*
+/Fig6/*
+Fig*.py
+/source_analysis_combined_1-10/*
+1.py
+activation_binary_benchmark.csv
+AUC0.1_per_peptide.csv
+AUC0.1.png
+source_analysis_vdjdb_piste_unipep_1-5

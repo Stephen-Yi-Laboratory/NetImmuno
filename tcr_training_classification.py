@@ -631,11 +631,6 @@ def load_checkpoint_if_any(resume_from: str, model, opt, scaler, device) -> Tupl
         except Exception as e:
             print(f"[Resume] AMP scaler state load failed ({e}); continuing with fresh scaler.")
 
-    if "rng_state" in ckpt:
-        torch.set_rng_state(ckpt["rng_state"])
-    if torch.cuda.is_available() and "cuda_rng_state" in ckpt:
-        torch.cuda.set_rng_state(ckpt["cuda_rng_state"])
-
     last_epoch = int(ckpt.get("epoch", 0))
     global_step = int(ckpt.get("global_step", 0))
 
