@@ -76,6 +76,7 @@ it to a probability with the sigmoid function.
 | `MHCpeptideEmbeddingClassifier.py` | pMHC regression model |
 | `TCRmhcEmbeddingClassifier.py` | TCR–pMHC classification model |
 | `PanTCR_dataload.py` | Sequence cleaning, datasets, and batch collation |
+| `MHC_pseudo.dat` | MHC allele-to-pseudosequence mapping |
 | `training_classification.py` | pMHC distributed training workflow |
 | `tcr_training_classification.py` | TCR–pMHC distributed training workflow |
 | `example_usage.py` | Standalone inference example for trained checkpoints |
@@ -121,26 +122,29 @@ scikit-learn, Biopython, lifelines, PyDESeq2, and GSEApy.
 ## Usage
 
 Run commands from the repository root. Checkpoints and data are not stored in
-Git, so supply a local checkpoint path.
+Git. Download the pretrained model parameters from the
+[PanimmuneNet Google Drive folder](https://drive.google.com/drive/folders/1Pz0oQQuRRTKyvXgty9FDSHuohOIb0ZoP?usp=sharing)
+and place them in the locations described in the [Checkpoints](#checkpoints)
+section.
 
 ### pMHC binding score
 
 ```bash
 python example_usage.py pmhc \
-  --checkpoint model_parameter/ckpt_epoch160.pt \
-  --mhc "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA" \
+  --checkpoint model_parameter/model_final.pt \
+  --mhc-allele "BoLA-2*005:01" \
   --peptide "SIINFEKL"
 ```
 
-The command prints a normalized pMHC binding score. The sequence above is only
-an input-format example; replace it with a real 34-residue MHC pseudosequence.
+The command resolves the MHC allele through `MHC_pseudo.dat` and prints a
+normalized pMHC binding score.
 
 ### TCR–pMHC binding probability
 
 ```bash
 python example_usage.py tcr \
   --checkpoint model_parameter_vdjdb_piste_unipep/ckpt_epoch90.pt \
-  --mhc "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA" \
+  --mhc-sequence "YYAEYRNIYDTIFVDTLYIAYWFYTWAAWNYEWY" \
   --peptide "SIINFEKL" \
   --tcra "CAVRDSNYQLIW" \
   --tcrb "CASSLGQGAEAFF"
@@ -151,13 +155,49 @@ to the 20 canonical amino acids, applies the same default length rules as the
 training pipeline, selects CUDA automatically when available, and reports the
 device used.
 
+### MHC input options
+
+Each prediction accepts exactly one of the following:
+
+- `--mhc-allele`: an MHC allele identifier looked up in `MHC_pseudo.dat`.
+- `--mhc-sequence`: a direct MHC-I pseudosequence, normally 34 residues.
+
+For example, these BoLA spellings are treated as equivalent during lookup:
+
+```text
+BoLA-2*005:01
+BoLA-2:00501
+BoLA-200501
+```
+
+`BoLA-2*005:01` follows the modern allele style reported by the
+[IPD-MHC Database](https://www.ebi.ac.uk/ipd/mhc/group/BoLA/). The alternative
+spellings are retained for compatibility with identifiers in existing
+pseudosequence datasets.
+
+By default, allele lookup reads:
+
+```text
+MHC_pseudo.dat
+```
+
+Use `--mhc-map` when the mapping file is stored elsewhere:
+
+```bash
+python example_usage.py pmhc \
+  --checkpoint model_parameter/model_final.pt \
+  --mhc-allele "BoLA-2*005:01" \
+  --mhc-map /path/to/MHC_pseudo.dat \
+  --peptide "SIINFEKL"
+```
+
 Use `--device cpu`, `--device cuda`, or a specific device such as
 `--device cuda:0` to override automatic device selection:
 
 ```bash
 python example_usage.py --device cuda:0 pmhc \
   --checkpoint /path/to/checkpoint.pt \
-  --mhc "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA" \
+  --mhc-allele "BoLA-2*005:01" \
   --peptide "SIINFEKL"
 ```
 
@@ -230,6 +270,17 @@ Cluster allocation, launcher, and scheduler options should follow the current
 TACC Stampede3 documentation and the resources assigned to the job.
 
 ## Checkpoints
+
+Pretrained model parameters are available from the
+[PanimmuneNet model-parameter folder on Google Drive](https://drive.google.com/drive/folders/1Pz0oQQuRRTKyvXgty9FDSHuohOIb0ZoP?usp=sharing).
+
+| Downloaded file | Purpose | Recommended local path |
+| --- | --- | --- |
+| `model_final.pt` | Complete pMHC regression model | `model_parameter/model_final.pt` |
+| `ckpt_epoch90.pt` | Complete trained TCR–pMHC checkpoint | `model_parameter_vdjdb_piste_unipep/ckpt_epoch90.pt` |
+
+The parameter directories are excluded by `.gitignore`, so downloading these
+files will not add the large checkpoints to the Git repository.
 
 The inference example recognizes both checkpoint formats produced by the
 training code:

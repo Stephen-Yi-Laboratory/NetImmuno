@@ -2,9 +2,10 @@
 
 Examples
 --------
-python example_usage.py pmhc --checkpoint PATH --mhc SEQUENCE --peptide SEQUENCE
-python example_usage.py tcr --checkpoint PATH --mhc SEQUENCE --peptide SEQUENCE \
-    --tcra SEQUENCE --tcrb SEQUENCE
+python example_usage.py pmhc --checkpoint PATH --mhc-allele "BoLA-2*005:01" \
+    --peptide SEQUENCE
+python example_usage.py tcr --checkpoint PATH --mhc-sequence SEQUENCE \
+    --peptide SEQUENCE --tcra SEQUENCE --tcrb SEQUENCE
 """
 
 from __future__ import annotations
@@ -28,6 +29,7 @@ from src.model_config import (
 
 
 VALID_AA = set("ACDEFGHIKLMNPQRSTVWY")
+DEFAULT_MHC_MAP = Path("MHC_pseudo.dat")
 ConfigT = TypeVar("ConfigT")
 
 
@@ -42,6 +44,67 @@ def clean_sequence(value: str, name: str) -> str:
 def fixed_length(sequence: str, length: int) -> str:
     """Right-pad with X or truncate to a fixed length."""
     return (sequence + ("X" * length))[:length]
+
+
+def normalized_allele_identifier(value: str) -> str:
+    """Normalize punctuation variants used for MHC allele identifiers."""
+    return "".join(char for char in value.upper() if char.isalnum())
+
+
+def load_mhc_pseudosequences(path: Path) -> Dict[str, str]:
+    """Read ``allele pseudosequence`` records from MHC_pseudo.dat."""
+    if not path.is_file():
+        raise FileNotFoundError(
+            f"MHC pseudosequence mapping not found: {path}. "
+            "Provide its location with --mhc-map."
+        )
+
+    aliases: Dict[str, str] = {}
+    normalized: Dict[str, str] = {}
+    ambiguous = set()
+
+    with path.open("r", encoding="utf-8") as handle:
+        for line_number, line in enumerate(handle, start=1):
+            record = line.strip()
+            if not record or record.startswith("#"):
+                continue
+            parts = record.split()
+            if len(parts) != 2:
+                raise ValueError(
+                    f"Invalid MHC mapping record at {path}:{line_number}."
+                )
+            allele, sequence = parts
+            sequence = clean_sequence(sequence, f"MHC mapping line {line_number}")
+            aliases[allele.upper()] = sequence
+
+            normalized_name = normalized_allele_identifier(allele)
+            previous = normalized.get(normalized_name)
+            if previous is not None and previous != sequence:
+                ambiguous.add(normalized_name)
+            else:
+                normalized[normalized_name] = sequence
+
+    for name in ambiguous:
+        normalized.pop(name, None)
+    aliases.update(normalized)
+    return aliases
+
+
+def resolve_mhc_sequence(args: argparse.Namespace) -> str:
+    """Resolve a direct pseudosequence or an allele identifier."""
+    if args.mhc_sequence:
+        return clean_sequence(args.mhc_sequence, "MHC pseudosequence")
+
+    mapping = load_mhc_pseudosequences(args.mhc_map)
+    exact_name = args.mhc_allele.strip().upper()
+    normalized_name = normalized_allele_identifier(args.mhc_allele)
+    sequence = mapping.get(exact_name) or mapping.get(normalized_name)
+    if sequence is None:
+        raise KeyError(
+            f"MHC allele '{args.mhc_allele}' was not found unambiguously in "
+            f"{args.mhc_map}."
+        )
+    return sequence
 
 
 def select_device(requested: str) -> torch.device:
@@ -113,7 +176,7 @@ def predict_pmhc(args: argparse.Namespace, device: torch.device) -> float:
     model.load_state_dict(extract_state_dict(checkpoint), strict=True)
     model.eval()
 
-    mhc = fixed_length(clean_sequence(args.mhc, "MHC"), pair_cfg.mhc_len)
+    mhc = fixed_length(resolve_mhc_sequence(args), pair_cfg.mhc_len)
     peptide = clean_sequence(args.peptide, "peptide")
     if len(peptide) > pair_cfg.pep_len:
         raise ValueError(
@@ -149,7 +212,7 @@ def predict_tcr(args: argparse.Namespace, device: torch.device) -> float:
     model.load_state_dict(extract_state_dict(checkpoint), strict=True)
     model.eval()
 
-    mhc = fixed_length(clean_sequence(args.mhc, "MHC"), pmhc_cfg.mhc_len)
+    mhc = fixed_length(resolve_mhc_sequence(args), pmhc_cfg.mhc_len)
     peptide = clean_sequence(args.peptide, "peptide")
     if len(peptide) > pmhc_cfg.pep_len:
         raise ValueError(
@@ -174,6 +237,28 @@ def predict_tcr(args: argparse.Namespace, device: torch.device) -> float:
     return float(probability.cpu())
 
 
+def add_mhc_input_arguments(parser: argparse.ArgumentParser) -> None:
+    """Add mutually exclusive MHC pseudosequence and allele inputs."""
+    mhc_input = parser.add_mutually_exclusive_group(required=True)
+    mhc_input.add_argument(
+        "--mhc-sequence",
+        help="Direct MHC-I pseudosequence (normally 34 residues).",
+    )
+    mhc_input.add_argument(
+        "--mhc-allele",
+        help=(
+            "MHC allele identifier resolved through MHC_pseudo.dat, for example "
+            "BoLA-2*005:01, BoLA-2:00501, or BoLA-200501."
+        ),
+    )
+    parser.add_argument(
+        "--mhc-map",
+        type=Path,
+        default=DEFAULT_MHC_MAP,
+        help=f"Allele-to-pseudosequence mapping (default: {DEFAULT_MHC_MAP}).",
+    )
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Run one PanimmuneNet pMHC or TCR-pMHC prediction."
@@ -187,14 +272,14 @@ def build_parser() -> argparse.ArgumentParser:
 
     pmhc = subparsers.add_parser("pmhc", help="Predict a pMHC binding score.")
     pmhc.add_argument("--checkpoint", type=Path, required=True)
-    pmhc.add_argument("--mhc", required=True, help="MHC-I pseudosequence.")
+    add_mhc_input_arguments(pmhc)
     pmhc.add_argument("--peptide", required=True, help="Peptide sequence.")
 
     tcr = subparsers.add_parser(
         "tcr", help="Predict a TCR-pMHC binding probability."
     )
     tcr.add_argument("--checkpoint", type=Path, required=True)
-    tcr.add_argument("--mhc", required=True, help="MHC-I pseudosequence.")
+    add_mhc_input_arguments(tcr)
     tcr.add_argument("--peptide", required=True, help="Peptide sequence.")
     tcr.add_argument("--tcra", required=True, help="TCR alpha-chain sequence.")
     tcr.add_argument(
